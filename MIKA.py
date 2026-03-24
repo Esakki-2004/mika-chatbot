@@ -1,10 +1,11 @@
 import json
 import os
+import time
 from google import genai
 from google.genai import types
 
 # --- 1. SETUP ---
-API_KEY = "AIzaSyDo88xlD0oVLK5vQLbG4C2kZ9tLSK37HDs"  # Best practice: use os.environ.get("GEMINI_API_KEY")
+API_KEY = "AIzaSyDo88xlD0oVLK5vQLbG4C2kZ9tLSK37HDs"  # Replace with your actual key
 BOT_NAME = "Mika"
 MEMORY_FILE = "mika_memory.json"
 
@@ -12,76 +13,59 @@ client = genai.Client(api_key=API_KEY)
 
 # --- 2. THE BRAIN (Identity & Memory) ---
 def load_memory():
-    """Load past conversations and convert them back to SDK objects."""
+    """Load past conversations from a file."""
     if os.path.exists(MEMORY_FILE):
-        try:
-            with open(MEMORY_FILE, "r") as f:
-                data = json.load(f)
-                # Reconstruct the list of Content objects the SDK expects
-                return [
-                    types.Content(
-                        role=m["role"], 
-                        parts=[types.Part(text=p["text"]) for p in m["parts"]]
-                    ) for m in data
-                ]
-        except Exception as e:
-            print(f"System: Error loading memory: {e}")
+        with open(MEMORY_FILE, "r") as f:
+            return json.load(f)
     return []
 
 def save_memory(history):
-    """Convert SDK history objects into JSON-friendly dictionaries."""
-    serializable = []
-    for entry in history:
-        serializable.append({
-            "role": entry.role,
-            "parts": [{"text": p.text} for p in entry.parts if p.text]
-        })
-    
+    """Save the current conversation to a file."""
     with open(MEMORY_FILE, "w") as f:
-        json.dump(serializable, f, indent=4)
+        json.dump(history, f, indent=4)
 
 def start_mika():
+    # Load past chat history
     past_history = load_memory()
     
+    # Start the chat session with memory
     chat = client.chats.create(
         model="gemini-2.0-flash", 
         config=types.GenerateContentConfig(
-            system_instruction=f"You are {BOT_NAME}, a clever Python-built assistant.",
+            system_instruction=f"You are {BOT_NAME}, a clever Python-built assistant. Remember the user's name if they tell you.",
         ),
         history=past_history
     )
 
-    print(f"=== {BOT_NAME.upper()} IS ONLINE ===")
+    print(f"=== {BOT_NAME.upper()} IS ONLINE (Memory Loaded) ===")
     
     if not past_history:
         print(f"{BOT_NAME}: Hi! I don't think we've met. What's your name?")
     else:
         print(f"{BOT_NAME}: Welcome back! How can I help you today?")
 
-    try:
-        while True:
-            user_input = input("\nYou: ").strip()
-            if not user_input: continue
-            if user_input.lower() in ["exit", "quit", "bye"]:
-                break
+    while True:
+        user_input = input("\nYou: ").strip()
 
-            print(f"{BOT_NAME} is thinking...", end="\r")
+        if user_input.lower() in ["exit", "quit", "bye"]:
+            # Save the history before leaving
+            save_memory(chat._history) 
+            print(f"{BOT_NAME}: History saved. See ya!")
+            break
 
-            try:
-                response = chat.send_message(user_input)
-                print(" " * 30, end="\r") 
-                print(f"{BOT_NAME}: {response.text}")
-                
-                # Use chat.history (public) instead of _history (private)
-                save_memory(chat.history)
+        print(f"{BOT_NAME} is thinking...", end="\r")
 
-            except Exception as e:
-                print(f"\n[AI Error]: {e}")
-    except KeyboardInterrupt:
-        print("\nExiting...")
-    finally:
-        save_memory(chat.history)
-        print(f"{BOT_NAME}: History saved. See ya!")
+        try:
+            # Send message to Gemini
+            response = chat.send_message(user_input)
+            print(" " * 30, end="\r") # Clear thinking line
+            print(f"{BOT_NAME}: {response.text}")
+            
+            # Save memory after every message just in case the app crashes
+            save_memory(chat._history)
+
+        except Exception as e:
+            print(f"\n[Error]: {e}")
 
 if __name__ == "__main__":
     start_mika()
